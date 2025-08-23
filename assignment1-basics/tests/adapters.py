@@ -32,7 +32,7 @@ def run_linear(
         Float[Tensor, "... d_out"]: The transformed output of your linear module.
     """
     linear = Linear(d_in, d_out)
-    linear.load_state_dict(weights)
+    linear.load_state_dict({'w': weights})
     return linear(in_features)
 
 def run_embedding(
@@ -55,7 +55,7 @@ def run_embedding(
     """
 
     embedding = Embedding(vocab_size, d_model)
-    embedding.load_state_dict(weights)
+    embedding.load_state_dict({'embeds': weights})
     return embedding(token_ids)
 
 
@@ -88,7 +88,14 @@ def run_swiglu(
     # swiglu.w1.weight.data = w1_weight
     # swiglu.w2.weight.data = w2_weight
     # swiglu.w3.weight.data = w3_weight
-    raise NotImplementedError
+    
+    swiglu = SwiGLU(d_ff, d_model)
+    swiglu.load_state_dict({
+        'w1.w': w1_weight,
+        'w2.w': w2_weight,
+        'w3.w': w3_weight
+    })
+    return swiglu(in_features)
 
 
 def run_scaled_dot_product_attention(
