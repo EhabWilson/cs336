@@ -66,7 +66,7 @@ class BPE_Tokenizer(object):
         # print("########## pre tokenization finished ##########")
         
         for token in total_counter:
-            bytes_token = tuple([s.encode('utf-8') for s in token])
+            bytes_token = tuple([bytes([b]) for b in token.encode('utf-8')])
             self.freq_table[bytes_token] = total_counter[token]
             for i in range(len(bytes_token) - 1):
                 self.pairs[(bytes_token[i], bytes_token[i + 1])] += total_counter[token]
