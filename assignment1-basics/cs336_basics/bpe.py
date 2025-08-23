@@ -24,7 +24,7 @@ class BPE_Tokenizer(object):
         self.compute_merges()
 
     def init_vocab(self):
-        vocab = {i: chr(i).encode("utf-8") for i in range(256)}
+        vocab = {i: bytes([i]) for i in range(256)}
         for i, token in enumerate(self.special_tokens):
             vocab[i + 256] = token.encode("utf-8")
         self.vocab = vocab
