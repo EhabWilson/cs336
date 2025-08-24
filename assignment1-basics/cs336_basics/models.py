@@ -61,3 +61,25 @@ class SwiGLU(torch.nn.Module):
         x1 = self.w1(x)
         x2 = x1 * torch.sigmoid(x1) * self.w3(x)
         return self.w2(x2)
+
+class RoPE(torch.nn.Module):
+    def __init__(self, theta: float, d_k: int, max_seq_len: int, device=None):
+        super().__init__()
+
+        freq_cis = self._precompute_freq_cis(theta, d_k, max_seq_len).to(device)
+        self.register_buffer('freq_cis', freq_cis, persistent=False)
+
+    def _precompute_freq_cis(self, theta, d_k, max_seq_len):
+        # cis (cos + i * sin)
+        freqs = theta ** (- torch.arange(0, d_k, 2) / d_k)
+        t = torch.arange(0, max_seq_len)
+        freq_cis = torch.polar(torch.ones(max_seq_len, d_k//2), einsum(t, freqs, "seq_len, half_d -> seq_len half_d"))
+
+        return freq_cis
+    
+    def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
+        rotary_matrix = self.freq_cis[token_positions]  # (..., seq_len, d/2)
+        x = torch.view_as_complex(x.view(*x.shape[:-1], -1, 2)) # (..., seq_len, d/2)
+
+        x = torch.view_as_real(x * rotary_matrix).flatten(-2)
+        return x
