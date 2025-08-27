@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from einops import rearrange, einsum
+from cs336_basics.utils import *
 
 
 class Linear(torch.nn.Module):
@@ -79,7 +80,39 @@ class RoPE(torch.nn.Module):
     
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
         rotary_matrix = self.freq_cis[token_positions]  # (..., seq_len, d/2)
-        x = torch.view_as_complex(x.view(*x.shape[:-1], -1, 2)) # (..., seq_len, d/2)
+        x = torch.view_as_complex(x.contiguous().view(*x.shape[:-1], -1, 2)) # (..., seq_len, d/2)
 
         x = torch.view_as_real(x * rotary_matrix).flatten(-2)
         return x
+    
+class CausalMultiHeadSelfAttention(torch.nn.Module):
+    def __init__(self, d_model, num_heads, rope=None):
+        super().__init__()
+
+        self.output = Linear(d_model, d_model)
+        self.q_proj = Linear(d_model, d_model)
+        self.k_proj = Linear(d_model, d_model)
+        self.v_proj = Linear(d_model, d_model)
+
+        self.rope = rope
+
+        self.d_model = d_model
+        self.nh = num_heads
+
+    def forward(self, x, token_positions=None):
+        ori_shape = x.shape # (..., seq_len, d_k)
+        seq_len = ori_shape[-2]
+        q, k, v = self.q_proj(x), self.k_proj(x), self.v_proj(x)   # (..., seq_len, d_k)
+        q = q.reshape(*ori_shape[:-1], self.nh, -1).transpose(-3, -2)    # (..., nh, seq_len, d_k//nh)
+        k = k.reshape(*ori_shape[:-1], self.nh, -1).transpose(-3, -2)    # (..., nh, seq_len, d_k//nh)
+        v = v.reshape(*ori_shape[:-1], self.nh, -1).transpose(-3, -2)    # (..., nh, seq_len, d_k//nh)
+
+        if self.rope is not None and token_positions is not None:
+            q = self.rope(q, token_positions)
+            k = self.rope(k, token_positions)
+        
+        mask = torch.triu(torch.ones((seq_len, seq_len), dtype=torch.bool), diagonal=1)
+        atten = scaled_dot_product_attention(q, k, v, mask=mask)
+        atten = atten.transpose(-3, -2).reshape(*ori_shape)
+
+        return self.output(atten)
