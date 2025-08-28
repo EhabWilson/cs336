@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from einops import rearrange, einsum
+from collections import OrderedDict
 from cs336_basics.utils import *
 
 
@@ -23,13 +24,13 @@ class Embedding(torch.nn.Module):
     def __init__(self, num_embeddings, embedding_dim, device=None, dtype=None):
         super().__init__()
 
-        self.embeds = nn.Parameter(
+        self.weight = nn.Parameter(
             torch.empty((num_embeddings, embedding_dim), dtype=dtype)
         ).to(device)
-        nn.init.trunc_normal_(self.embeds, mean=0, std=1, a=-3., b=3.)
+        nn.init.trunc_normal_(self.weight, mean=0, std=1, a=-3., b=3.)
 
     def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
-        return self.embeds[token_ids]
+        return self.weight[token_ids]
 
 class RMSNorm(torch.nn.Module):
     def __init__(self, d_model: int, eps: float = 1e-5, device=None, dtype=None):
@@ -132,5 +133,36 @@ class TransformerBlock(torch.nn.Module):
     def forward(self, x, token_positions=None):
         x = x + self.attn(self.ln1(x), token_positions)
         x = x + self.ffn(self.ln2(x))
+
+        return x
+
+class Transformer(torch.nn.Module):
+    def __init__(
+        self, 
+        vocab_size: int,
+        context_length: int,
+        num_layers: int,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        rope_theta: float,
+    ):
+        super().__init__()
+
+        self.token_embeddings = Embedding(vocab_size, d_model)
+        
+        rope = RoPE(rope_theta, d_model//num_heads, context_length)
+        self.layers = nn.Sequential(OrderedDict([
+            (str(i), TransformerBlock(d_model, num_heads, d_ff, rope)) for i in range(num_layers)
+        ]))
+
+        self.ln_final = RMSNorm(d_model)
+        self.lm_head = Linear(d_model, vocab_size)
+
+    def forward(self, x):
+        x = self.token_embeddings(x)
+        x = self.layers(x)
+        x = self.ln_final(x)
+        x = self.lm_head(x)
 
         return x
