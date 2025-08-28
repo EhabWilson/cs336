@@ -18,3 +18,10 @@ def scaled_dot_product_attention(queries, keys, values, mask=None):
 
     x = softmax(x, -1)
     return einsum(x, values, "... q k, ... k d_v -> ... q d_v")
+
+def cross_entropy(inputs, targets):
+    # inputs: [..., vocab_size] targets: Int[...]
+    inputs = inputs - torch.max(inputs, dim=-1, keepdim=True).values
+    l = - torch.gather(inputs, -1, targets.unsqueeze(-1)).squeeze(-1) \
+        + torch.log(torch.sum(torch.exp(inputs), dim=-1))
+    return torch.mean(l)
