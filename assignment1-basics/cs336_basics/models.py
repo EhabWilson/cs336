@@ -78,7 +78,10 @@ class RoPE(torch.nn.Module):
 
         return freq_cis
     
-    def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, token_positions: torch.Tensor=None) -> torch.Tensor:
+        if token_positions is None:
+            token_positions = torch.arange(x.shape[-2])
+
         rotary_matrix = self.freq_cis[token_positions]  # (..., seq_len, d/2)
         x = torch.view_as_complex(x.contiguous().view(*x.shape[:-1], -1, 2)) # (..., seq_len, d/2)
 
@@ -107,7 +110,7 @@ class CausalMultiHeadSelfAttention(torch.nn.Module):
         k = k.reshape(*ori_shape[:-1], self.nh, -1).transpose(-3, -2)    # (..., nh, seq_len, d_k//nh)
         v = v.reshape(*ori_shape[:-1], self.nh, -1).transpose(-3, -2)    # (..., nh, seq_len, d_k//nh)
 
-        if self.rope is not None and token_positions is not None:
+        if self.rope is not None:
             q = self.rope(q, token_positions)
             k = self.rope(k, token_positions)
         
@@ -115,4 +118,19 @@ class CausalMultiHeadSelfAttention(torch.nn.Module):
         atten = scaled_dot_product_attention(q, k, v, mask=mask)
         atten = atten.transpose(-3, -2).reshape(*ori_shape)
 
-        return self.output(atten)
+        return self.output_proj(atten)
+    
+class TransformerBlock(torch.nn.Module):
+    def __init__(self, d_model: int, num_heads: int, d_ff: int, rope=None):
+        super().__init__()
+
+        self.ln1 = RMSNorm(d_model)
+        self.attn = CausalMultiHeadSelfAttention(d_model, num_heads, rope)
+        self.ln2 = RMSNorm(d_model)
+        self.ffn = SwiGLU(d_ff, d_model)
+    
+    def forward(self, x, token_positions=None):
+        x = x + self.attn(self.ln1(x), token_positions)
+        x = x + self.ffn(self.ln2(x))
+
+        return x
