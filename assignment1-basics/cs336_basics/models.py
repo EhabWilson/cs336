@@ -8,13 +8,13 @@ class Linear(torch.nn.Module):
     def __init__(self, in_features, out_features, device=None, dtype=None):
         super().__init__()
 
-        self.w = nn.Parameter(
+        self.weight = nn.Parameter(
             torch.empty((out_features, in_features), dtype=dtype)
         ).to(device)
-        nn.init.trunc_normal_(self.w, mean=0, std=1, a=-3., b=3.)
+        nn.init.trunc_normal_(self.weight, mean=0, std=1, a=-3., b=3.)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return einsum(self.w, x, "d_out d_in, ... d_in -> ... d_out")
+        return einsum(self.weight, x, "d_out d_in, ... d_in -> ... d_out")
     
     # def load_state_dict(self, weights: torch.Tensor):
     #     self.w.data.copy_(weights)
@@ -35,10 +35,10 @@ class RMSNorm(torch.nn.Module):
     def __init__(self, d_model: int, eps: float = 1e-5, device=None, dtype=None):
         super().__init__()
 
-        self.g = nn.Parameter(
+        self.weight = nn.Parameter(
             torch.empty(d_model, dtype=dtype)
         ).to(device)
-        nn.init.trunc_normal_(self.g, mean=0, std=1, a=-3., b=3.)
+        nn.init.trunc_normal_(self.weight, mean=0, std=1, a=-3., b=3.)
         self.eps = eps
         self.d_model = d_model
 
@@ -47,7 +47,7 @@ class RMSNorm(torch.nn.Module):
         x = x.to(torch.float32)
 
         rms = torch.sqrt(torch.sum(x**2, dim=-1) / self.d_model + self.eps)
-        rms_norm = einsum(x, self.g, "... d_model, d_model -> ... d_model") / rms[...,None]
+        rms_norm = einsum(x, self.weight, "... d_model, d_model -> ... d_model") / rms[...,None]
         return rms_norm.to(in_type)
 
 class SwiGLU(torch.nn.Module):
@@ -89,7 +89,7 @@ class CausalMultiHeadSelfAttention(torch.nn.Module):
     def __init__(self, d_model, num_heads, rope=None):
         super().__init__()
 
-        self.output = Linear(d_model, d_model)
+        self.output_proj = Linear(d_model, d_model)
         self.q_proj = Linear(d_model, d_model)
         self.k_proj = Linear(d_model, d_model)
         self.v_proj = Linear(d_model, d_model)

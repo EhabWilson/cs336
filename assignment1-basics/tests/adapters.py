@@ -33,7 +33,7 @@ def run_linear(
         Float[Tensor, "... d_out"]: The transformed output of your linear module.
     """
     linear = Linear(d_in, d_out)
-    linear.load_state_dict({'w': weights})
+    linear.load_state_dict({'weight': weights})
     return linear(in_features)
 
 def run_embedding(
@@ -92,9 +92,9 @@ def run_swiglu(
     
     swiglu = SwiGLU(d_ff, d_model)
     swiglu.load_state_dict({
-        'w1.w': w1_weight,
-        'w2.w': w2_weight,
-        'w3.w': w3_weight
+        'w1.weight': w1_weight,
+        'w2.weight': w2_weight,
+        'w3.weight': w3_weight
     })
     return swiglu(in_features)
 
@@ -151,14 +151,14 @@ def run_multihead_self_attention(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    multi_head_self_attention = CausalMultiHeadSelfAttention(d_model, num_heads)
-    multi_head_self_attention.load_state_dict({
-        "q_proj.w": q_proj_weight,
-        "k_proj.w": k_proj_weight,
-        "v_proj.w": v_proj_weight,
-        "output.w": o_proj_weight,
+    mha = CausalMultiHeadSelfAttention(d_model, num_heads)
+    mha.load_state_dict({
+        "q_proj.weight": q_proj_weight,
+        "k_proj.weight": k_proj_weight,
+        "v_proj.weight": v_proj_weight,
+        "output_proj.weight": o_proj_weight,
     })
-    return multi_head_self_attention(in_features)
+    return mha(in_features)
 
 
 def run_multihead_self_attention_with_rope(
@@ -199,14 +199,14 @@ def run_multihead_self_attention_with_rope(
         implementation with the given QKV projection weights and input features.
     """
     rope = RoPE(theta, d_model//num_heads, max_seq_len)
-    multi_head_self_attention = CausalMultiHeadSelfAttention(d_model, num_heads, rope)
-    multi_head_self_attention.load_state_dict({
-        "q_proj.w": q_proj_weight,
-        "k_proj.w": k_proj_weight,
-        "v_proj.w": v_proj_weight,
-        "output.w": o_proj_weight,
+    mha = CausalMultiHeadSelfAttention(d_model, num_heads, rope)
+    mha.load_state_dict({
+        "q_proj.weight": q_proj_weight,
+        "k_proj.weight": k_proj_weight,
+        "v_proj.weight": v_proj_weight,
+        "output_proj.weight": o_proj_weight,
     })
-    return multi_head_self_attention(in_features, token_positions)
+    return mha(in_features, token_positions)
 
 
 def run_rope(
@@ -408,7 +408,7 @@ def run_rmsnorm(
         RMSNorm of the `in_features`.
     """
     rms_norm = RMSNorm(d_model, eps)
-    rms_norm.load_state_dict(weights)
+    rms_norm.load_state_dict({"weight": weights})
     return rms_norm(in_features)
 
 
