@@ -76,3 +76,6 @@ def sft_microbatch_train_step(
     metadata = {}
 
     return loss.detach(), metadata
+
+def log_generations():
+    raise NotImplementedError()
