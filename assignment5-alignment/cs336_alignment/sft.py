@@ -1,6 +1,7 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 from torch.nn.utils.rnn import pad_sequence
+import torch.nn.functional as F
 from .utils import *
 
 # model = AutoModelForCausalLM.from_pretrained(
@@ -35,3 +36,20 @@ def compute_entropy(logits: torch.Tensor) -> torch.Tensor:
     probs = torch.exp(logits - lse[..., None])
 
     return lse - torch.sum(probs * logits, dim=-1)
+
+def get_response_log_probs(
+    model,
+    input_ids,
+    labels,
+    return_token_entropy: bool = False
+) -> dict[str, torch.Tensor]:
+    output = model(input_ids)
+    logits = output.logits
+    log_probs = F.log_softmax(logits, dim=-1)
+    log_probs = log_probs.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+    results = {"log_probs": log_probs}
+
+    if return_token_entropy:
+        results["token_entropy"] = compute_entropy(logits)
+
+    return results
