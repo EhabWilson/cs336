@@ -1,8 +1,18 @@
+import os
+from tqdm import tqdm
+from itertools import islice
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from datasets import load_dataset
 import torch
 from torch.nn.utils.rnn import pad_sequence
 import torch.nn.functional as F
-from .utils import *
+from torch.utils.data import DataLoader
+from torch.optim import AdamW
+
+import wandb
+
+from cs336_alignment.utils import *
+from cs336_alignment.math_baseline import parse_MATH_data
 
 # model = AutoModelForCausalLM.from_pretrained(
 #     QWEN_MODEL,
@@ -18,9 +28,9 @@ def tokenize_prompt_and_output(prompt_strs, output_strs, tokenizer):
     for prompt, output in zip(prompt_strs, output_strs):
         prompt_id = tokenizer(prompt, add_special_tokens=False)['input_ids']
         output_id = tokenizer(output, add_special_tokens=False)['input_ids']
-        ids.append(torch.Tensor(prompt_id + output_id))
+        ids.append(torch.LongTensor(prompt_id + output_id))
         response_mask.append(torch.Tensor([False]*len(prompt_id)+[True]*len(output_id)))
-    
+        
     ids = pad_sequence(ids, batch_first=True, padding_value=tokenizer.pad_token_id)
     response_mask = pad_sequence(response_mask, batch_first=True, padding_value=False)
 
@@ -75,7 +85,76 @@ def sft_microbatch_train_step(
 
     metadata = {}
 
-    return loss.detach(), metadata
+    return loss.detach().item(), metadata
 
 def log_generations():
     raise NotImplementedError()
+
+def main(epochs=10, data_slice=128, batch_size=4, gradient_accumulation_steps=4, save_per_epochs=10, lr=5e-5, device="cuda"):
+    run = wandb.init(
+        project="cs336",
+        # Track hyperparameters and run metadata.
+        config={
+            "data_slice": data_slice,
+            "batch_size": batch_size,
+            "gradient_accumulation_steps": gradient_accumulation_steps,
+            "epochs": epochs,
+        },
+    )
+    model = AutoModelForCausalLM.from_pretrained(
+        QWEN_MODEL,
+        torch_dtype=torch.bfloat16,
+        attn_implementation="flash_attention_2",
+    ).to(device)
+    tokenizer = AutoTokenizer.from_pretrained(QWEN_MODEL)
+    optimizer = AdamW(model.parameters(), lr=lr)
+    
+    ds = load_dataset(
+        "parquet", 
+        data_files={
+            "train": "/root/autodl-tmp/data/MATH/data/train-00000-of-00001.parquet",
+            "test": "/root/autodl-tmp/data/MATH/data/test-00000-of-00001.parquet",
+        },
+        split="train",
+        # cache_dir="/root/autodl-tmp/hf_cache",
+        streaming=True
+    )
+    dataloader = DataLoader(ds, batch_size)
+
+    for epoch in tqdm(range(epochs)):
+        total_loss = 0
+        for iteration, batch in enumerate(
+            islice(dataloader, data_slice//batch_size)
+        ):            
+            prompts = batch["problem"]
+            outputs = batch["solution"]
+            data = tokenize_prompt_and_output(prompts, outputs, tokenizer)
+
+            log_probs = get_response_log_probs(
+                model=model,
+                input_ids=data["input_ids"].to(device),
+                labels=data["labels"].to(device)
+            )["log_probs"]
+
+            loss, _ = sft_microbatch_train_step(
+                policy_log_probs=log_probs,
+                response_mask=data["response_mask"].to(device),
+                gradient_accumulation_steps=gradient_accumulation_steps
+            )
+            total_loss += loss
+
+            if (iteration + 1) % gradient_accumulation_steps == 0:
+                optimizer.step()
+                optimizer.zero_grad()
+                torch.cuda.empty_cache()
+
+        run.log({"loss": total_loss})
+        if (epoch + 1) % save_per_epochs == 0:
+            model.save_pretrained(save_directory=f"/root/autodl-tmp/exps/sft/num_{data_slice:04d}/{epoch + 1:05d}")
+            tokenizer.save_pretrained(save_directory=f"/root/autodl-tmp/exps/sft/{epoch + 1:05d}")
+
+
+if __name__ == '__main__':
+    # for data_slice in [128, 256, 512, 1024, 5000]:
+    for data_slice in [256, 512, 1024, 5000]:
+        main(epochs=30, data_slice=data_slice)

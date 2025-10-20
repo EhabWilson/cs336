@@ -14,10 +14,11 @@ def evaluate_vllm(
     prompts: List[str],
     gts,
     eval_sampling_params: SamplingParams,
+    save_path: str = "math_results.jsonl"
  ) -> None:
     outputs = vllm_model.generate(prompts, eval_sampling_params)
     format_rewards, answer_rewards, rewards = [], [], []
-    with open("math_results.jsonl", "w", encoding="utf-8") as f:
+    with open(save_path, "w", encoding="utf-8") as f:
         for output, gt in zip(outputs, gts):
             generated_answer = output.outputs[0].text
             r = reward_fn(generated_answer, gt)

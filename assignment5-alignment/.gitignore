@@ -169,3 +169,4 @@ cython_debug/
 
 cs336_alignment/*.ipynb
 results/**
+wandb/**
