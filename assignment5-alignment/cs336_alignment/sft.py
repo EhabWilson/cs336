@@ -1,8 +1,12 @@
 import os
 from tqdm import tqdm
 from itertools import islice
+import json
+
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from datasets import load_dataset
+from vllm import LLM, SamplingParams
+
 import torch
 from torch.nn.utils.rnn import pad_sequence
 import torch.nn.functional as F
@@ -12,7 +16,8 @@ from torch.optim import AdamW
 import wandb
 
 from cs336_alignment.utils import *
-from cs336_alignment.math_baseline import parse_MATH_data
+from cs336_alignment.math_baseline import *
+from cs336_alignment.drgrpo_grader import question_only_reward_fn
 
 # model = AutoModelForCausalLM.from_pretrained(
 #     QWEN_MODEL,
@@ -93,6 +98,7 @@ def log_generations():
 def main(epochs=10, data_slice=128, batch_size=4, gradient_accumulation_steps=4, save_per_epochs=10, lr=5e-5, device="cuda"):
     run = wandb.init(
         project="cs336",
+        name=f"{data_slice:04d}",
         # Track hyperparameters and run metadata.
         config={
             "data_slice": data_slice,
@@ -100,6 +106,7 @@ def main(epochs=10, data_slice=128, batch_size=4, gradient_accumulation_steps=4,
             "gradient_accumulation_steps": gradient_accumulation_steps,
             "epochs": epochs,
         },
+        reinit=True
     )
     model = AutoModelForCausalLM.from_pretrained(
         QWEN_MODEL,
@@ -121,7 +128,7 @@ def main(epochs=10, data_slice=128, batch_size=4, gradient_accumulation_steps=4,
     )
     dataloader = DataLoader(ds, batch_size)
 
-    for epoch in tqdm(range(epochs)):
+    for epoch in tqdm(range(epochs), ncols=50):
         total_loss = 0
         for iteration, batch in enumerate(
             islice(dataloader, data_slice//batch_size)
@@ -151,10 +158,70 @@ def main(epochs=10, data_slice=128, batch_size=4, gradient_accumulation_steps=4,
         run.log({"loss": total_loss})
         if (epoch + 1) % save_per_epochs == 0:
             model.save_pretrained(save_directory=f"/root/autodl-tmp/exps/sft/num_{data_slice:04d}/{epoch + 1:05d}")
-            tokenizer.save_pretrained(save_directory=f"/root/autodl-tmp/exps/sft/{epoch + 1:05d}")
+            # tokenizer.save_pretrained(save_directory=f"/root/autodl-tmp/exps/sft/{epoch + 1:05d}")
 
+def load_policy_into_vllm_instance(model, llm: LLM):
+    """
+    Copied from https://github.com/huggingface/trl/blob/
+    22759c820867c8659d00082ba8cf004e963873c1/trl/trainer/grpo_trainer.py#L670.
+    """
+    model.eval()
+    model.tie_weights()
+    cpu_sd = {k: v.detach().to("cpu") for k, v in model.state_dict().items()}
+
+    llm_model = llm.llm_engine.model_executor.driver_worker.model_runner.model
+    llm_model.load_weights(cpu_sd.items())
+
+
+def load_and_format_prompts(data_path: str) -> tuple[list[str], list[str], list[str]]:
+    # with open(prompt_path, "r") as file:
+    #     prompt = file.read()
+
+    prompts = []
+    gts = []
+    with open(data_path, "r") as file:
+        for line in file:
+            data = json.loads(line)
+            prompts.append(data["problem"])
+            gts.append(data["solution"])
+
+            # prompts.append(prompt.format(question=data["question"]))
+            # cot.append(convert_cot_to_think_answer(data["answer"]))
+            # answers.append(extract_gsm8k_answer(data["answer"]))
+
+    return prompts, gts
 
 if __name__ == '__main__':
     # for data_slice in [128, 256, 512, 1024, 5000]:
-    for data_slice in [256, 512, 1024, 5000]:
-        main(epochs=30, data_slice=data_slice)
+    # for data_slice in [1024, 5000]:
+    #     main(epochs=30, data_slice=data_slice, batch_size=2, gradient_accumulation_steps=8)
+    
+
+    prompts, gts = load_and_format_prompts("/root/workspace/cs336/assignment5-alignment/MATH/test.jsonl")
+    # llm = LLM(QWEN_MODEL)
+    for data_slice in [128, 256, 512, 1024, 5000]:
+        epoch=30
+        llm = LLM(
+            model=f"/root/autodl-tmp/exps/sft/num_{data_slice:04d}/{epoch:05d}",
+            tokenizer=QWEN_MODEL,
+            gpu_memory_utilization=0.9,
+        )
+        # model = AutoModelForCausalLM.from_pretrained(
+        #     f"/root/autodl-tmp/exps/sft/num_{data_slice:04d}/{epoch:05d}",
+        #     torch_dtype=torch.bfloat16,
+        #     attn_implementation="flash_attention_2",
+        # )
+        # load_policy_into_vllm_instance(model, llm)
+
+        sampling_params = SamplingParams(
+            temperature=1.0,
+            top_p=1.0,
+            max_tokens=1024,
+            stop=["</answer>"],
+            include_stop_str_in_output=True
+        )
+
+        evaluate_vllm(llm, question_only_reward_fn, prompts, gts, sampling_params, save_path=f"/root/autodl-tmp/exps/sft/num_{data_slice:04d}/results.jsonl")
+
+        del llm
+        torch.cuda.empty_cache()
