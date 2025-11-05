@@ -17,7 +17,7 @@ import wandb
 
 from cs336_alignment.utils import *
 from cs336_alignment.math_baseline import *
-from cs336_alignment.drgrpo_grader import question_only_reward_fn
+from cs336_alignment.drgrpo_grader import question_only_reward_fn, extract_answer
 
 # model = AutoModelForCausalLM.from_pretrained(
 #     QWEN_MODEL,
@@ -97,7 +97,7 @@ def log_generations():
 
 def main(epochs=10, data_slice=128, batch_size=4, gradient_accumulation_steps=4, save_per_epochs=10, lr=5e-5, device="cuda"):
     run = wandb.init(
-        project="cs336",
+        project="cs336_cot",
         name=f"{data_slice:04d}",
         # Track hyperparameters and run metadata.
         config={
@@ -172,22 +172,24 @@ def load_policy_into_vllm_instance(model, llm: LLM):
     llm_model = llm.llm_engine.model_executor.driver_worker.model_runner.model
     llm_model.load_weights(cpu_sd.items())
 
+def convert_cot_to_think_answer(cot):
+    return cot + " </think> <answer> " + extract_answer(cot) + " </answer>"
 
 def load_and_format_prompts(data_path: str) -> tuple[list[str], list[str], list[str]]:
-    # with open(prompt_path, "r") as file:
-    #     prompt = file.read()
+    with open(R1_ZERO_PROMPT, "r") as file:
+        prompt = file.read()
 
     prompts = []
     gts = []
     with open(data_path, "r") as file:
         for line in file:
             data = json.loads(line)
-            prompts.append(data["problem"])
-            gts.append(data["solution"])
+            # prompts.append(data["problem"])
+            # gts.append(data["solution"])
 
-            # prompts.append(prompt.format(question=data["question"]))
-            # cot.append(convert_cot_to_think_answer(data["answer"]))
-            # answers.append(extract_gsm8k_answer(data["answer"]))
+            prompts.append(prompt.format(question=data["problem"]))
+            gts.append(convert_cot_to_think_answer(data["solution"]))
+            # answers.append(extract_answer(data["answer"]))
 
     return prompts, gts
 
@@ -200,19 +202,15 @@ if __name__ == '__main__':
     prompts, gts = load_and_format_prompts("/root/workspace/cs336/assignment5-alignment/MATH/test.jsonl")
     # llm = LLM(QWEN_MODEL)
     for data_slice in [128, 256, 512, 1024, 5000]:
-        epoch=30
+        epoch=20
+        main(epochs=epoch, data_slice=data_slice, batch_size=2, gradient_accumulation_steps=8)
+        torch.cuda.empty_cache()
+        
         llm = LLM(
-            model=f"/root/autodl-tmp/exps/sft/num_{data_slice:04d}/{epoch:05d}",
+            model=f"/root/autodl-tmp/exps/sft_cot/num_{data_slice:04d}/{epoch:05d}",
             tokenizer=QWEN_MODEL,
             gpu_memory_utilization=0.9,
         )
-        # model = AutoModelForCausalLM.from_pretrained(
-        #     f"/root/autodl-tmp/exps/sft/num_{data_slice:04d}/{epoch:05d}",
-        #     torch_dtype=torch.bfloat16,
-        #     attn_implementation="flash_attention_2",
-        # )
-        # load_policy_into_vllm_instance(model, llm)
-
         sampling_params = SamplingParams(
             temperature=1.0,
             top_p=1.0,
@@ -220,8 +218,6 @@ if __name__ == '__main__':
             stop=["</answer>"],
             include_stop_str_in_output=True
         )
-
-        evaluate_vllm(llm, question_only_reward_fn, prompts, gts, sampling_params, save_path=f"/root/autodl-tmp/exps/sft/num_{data_slice:04d}/results.jsonl")
-
+        evaluate_vllm(llm, r1_zero_reward_fn, prompts, gts, sampling_params, save_path=f"/root/autodl-tmp/exps/sft_cot/num_{data_slice:04d}/results.jsonl")
         del llm
         torch.cuda.empty_cache()
