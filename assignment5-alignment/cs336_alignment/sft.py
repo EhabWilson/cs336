@@ -95,9 +95,9 @@ def sft_microbatch_train_step(
 def log_generations():
     raise NotImplementedError()
 
-def main(epochs=10, data_slice=128, batch_size=4, gradient_accumulation_steps=4, save_per_epochs=10, lr=5e-5, device="cuda"):
+def main(exp_dir, epochs=10, data_slice=128, batch_size=4, gradient_accumulation_steps=4, save_per_epochs=10, lr=5e-5, device="cuda"):
     run = wandb.init(
-        project="cs336_cot",
+        project="cs336_cot_real",
         name=f"{data_slice:04d}",
         # Track hyperparameters and run metadata.
         config={
@@ -119,7 +119,8 @@ def main(epochs=10, data_slice=128, batch_size=4, gradient_accumulation_steps=4,
     ds = load_dataset(
         "parquet", 
         data_files={
-            "train": "/root/autodl-tmp/data/MATH/data/train-00000-of-00001.parquet",
+            # "train": "/root/autodl-tmp/data/MATH/data/train-00000-of-00001.parquet",
+            "train": "/root/workspace/cs336/assignment5-alignment/MATH/train.parquet",
             "test": "/root/autodl-tmp/data/MATH/data/test-00000-of-00001.parquet",
         },
         split="train",
@@ -134,7 +135,7 @@ def main(epochs=10, data_slice=128, batch_size=4, gradient_accumulation_steps=4,
             islice(dataloader, data_slice//batch_size)
         ):            
             prompts = batch["problem"]
-            outputs = batch["solution"]
+            outputs = batch["answer"]
             data = tokenize_prompt_and_output(prompts, outputs, tokenizer)
 
             log_probs = get_response_log_probs(
@@ -155,9 +156,9 @@ def main(epochs=10, data_slice=128, batch_size=4, gradient_accumulation_steps=4,
                 optimizer.zero_grad()
                 torch.cuda.empty_cache()
 
-        run.log({"loss": total_loss})
+        run.log({"loss": total_loss/data_slice})
         if (epoch + 1) % save_per_epochs == 0:
-            model.save_pretrained(save_directory=f"/root/autodl-tmp/exps/sft/num_{data_slice:04d}/{epoch + 1:05d}")
+            model.save_pretrained(save_directory=f"{exp_dir}/{epoch + 1:05d}")
             # tokenizer.save_pretrained(save_directory=f"/root/autodl-tmp/exps/sft/{epoch + 1:05d}")
 
 def load_policy_into_vllm_instance(model, llm: LLM):
@@ -197,17 +198,17 @@ if __name__ == '__main__':
     # for data_slice in [128, 256, 512, 1024, 5000]:
     # for data_slice in [1024, 5000]:
     #     main(epochs=30, data_slice=data_slice, batch_size=2, gradient_accumulation_steps=8)
-    
 
     prompts, gts = load_and_format_prompts("/root/workspace/cs336/assignment5-alignment/MATH/test.jsonl")
     # llm = LLM(QWEN_MODEL)
     for data_slice in [128, 256, 512, 1024, 5000]:
         epoch=20
-        main(epochs=epoch, data_slice=data_slice, batch_size=2, gradient_accumulation_steps=8)
+        exp_dir = "/root/autodl-tmp/exps/sft_cot_real"
+        main(exp_dir=f"{exp_dir}/num_{data_slice:04d}", epochs=epoch, data_slice=data_slice, batch_size=2, gradient_accumulation_steps=8)
         torch.cuda.empty_cache()
         
         llm = LLM(
-            model=f"/root/autodl-tmp/exps/sft_cot/num_{data_slice:04d}/{epoch:05d}",
+            model=f"{exp_dir}/num_{data_slice:04d}/{epoch:05d}",
             tokenizer=QWEN_MODEL,
             gpu_memory_utilization=0.9,
         )
@@ -218,6 +219,6 @@ if __name__ == '__main__':
             stop=["</answer>"],
             include_stop_str_in_output=True
         )
-        evaluate_vllm(llm, r1_zero_reward_fn, prompts, gts, sampling_params, save_path=f"/root/autodl-tmp/exps/sft_cot/num_{data_slice:04d}/results.jsonl")
+        evaluate_vllm(llm, r1_zero_reward_fn, prompts, gts, sampling_params, save_path=f"{exp_dir}/num_{data_slice:04d}/results.jsonl")
         del llm
         torch.cuda.empty_cache()
