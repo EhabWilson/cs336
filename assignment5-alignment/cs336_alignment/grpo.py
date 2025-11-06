@@ -1,5 +1,5 @@
 import torch
-from typing import Callable
+from typing import Callable, Literal
 
 
 def compute_group_normalized_rewards(
@@ -46,3 +46,29 @@ def compute_grpo_clip_loss(
         "old_log_probs": old_log_probs
     }
     return - torch.minimum(ratio * advantages, clipped_ratio * advantages), metadata
+
+def compute_policy_gradient_loss(
+    policy_log_probs: torch.Tensor,     # (b, seq_len)
+    loss_type: Literal["no_baseline", "reinforce_with_baseline", "grpo_clip"],
+    raw_rewards: torch.Tensor | None = None,    # (b, 1) no_baseline
+    advantages: torch.Tensor | None = None,     # (b, 1) reinforce_with_baseline / grpo_clip
+    old_log_probs: torch.Tensor | None = None,  # (b, seq_len) grpo_clip
+    cliprange: float | None = None,             # grpo_clip
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    assert loss_type in ["no_baseline", "reinforce_with_baseline", "grpo_clip"]
+
+    metadata = {}
+
+    if loss_type == "no_baseline":
+        assert raw_rewards is not None and raw_rewards.shape[0] == policy_log_probs.shape[0]
+        return compute_naive_policy_gradient_loss(raw_rewards, policy_log_probs), metadata
+    elif loss_type == "reinforce_with_baseline":
+        assert advantages is not None and advantages.shape[0] == policy_log_probs.shape[0]
+        return compute_naive_policy_gradient_loss(advantages, policy_log_probs), metadata
+    elif loss_type == "grpo_clip":
+        assert (advantages is not None 
+                and advantages.shape[0] == policy_log_probs.shape[0] 
+                and old_log_probs is not None 
+                and old_log_probs.shape == policy_log_probs.shape
+                and cliprange is not None)
+        return compute_grpo_clip_loss(advantages, policy_log_probs, old_log_probs, cliprange)
