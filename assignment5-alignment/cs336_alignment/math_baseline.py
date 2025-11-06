@@ -3,9 +3,8 @@ from typing import Callable, List
 import pandas as pd
 import json
 
-from drgrpo_grader import r1_zero_reward_fn
-from utils import *
-from drgrpo_grader import extract_answer
+from cs336_alignment.drgrpo_grader import r1_zero_reward_fn, extract_answer
+from cs336_alignment.utils import *
 
 
 def evaluate_vllm(
