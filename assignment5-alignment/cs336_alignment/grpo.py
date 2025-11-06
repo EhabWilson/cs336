@@ -24,10 +24,25 @@ def compute_group_normalized_rewards(
         advantages = advantages / (raw_rewards.std(dim=-1, keepdim=True) + advantage_eps)
     
     metadata = {}
-    return (advantages.reshape(-1), raw_rewards.reshape(-1), metadata)
+    return advantages.reshape(-1), raw_rewards.reshape(-1), metadata
 
 def compute_naive_policy_gradient_loss(
     raw_rewards_or_advantages: torch.Tensor,    # (b, 1)
     policy_log_probs: torch.Tensor,             # (b, seq_len)
 ) -> torch.Tensor:
     return - raw_rewards_or_advantages * policy_log_probs
+
+def compute_grpo_clip_loss(
+    advantages: torch.Tensor,           # (b, 1)
+    policy_log_probs: torch.Tensor,     # (b ,seq_len)
+    old_log_probs: torch.Tensor,        # (b, seq_len)
+    cliprange: float,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:  # (loss, metadata)
+    ratio = torch.exp(policy_log_probs - old_log_probs)
+    clipped_ratio = torch.clamp(ratio, 1 - cliprange, 1 + cliprange)
+
+    metadata = {
+        "policy_log_probs": policy_log_probs,
+        "old_log_probs": old_log_probs
+    }
+    return - torch.minimum(ratio * advantages, clipped_ratio * advantages), metadata
