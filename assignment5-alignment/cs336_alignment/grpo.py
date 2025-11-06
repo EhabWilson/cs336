@@ -25,3 +25,9 @@ def compute_group_normalized_rewards(
     
     metadata = {}
     return (advantages.reshape(-1), raw_rewards.reshape(-1), metadata)
+
+def compute_naive_policy_gradient_loss(
+    raw_rewards_or_advantages: torch.Tensor,    # (b, 1)
+    policy_log_probs: torch.Tensor,             # (b, seq_len)
+) -> torch.Tensor:
+    return - raw_rewards_or_advantages * policy_log_probs
